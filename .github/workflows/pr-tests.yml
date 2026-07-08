@@ -1,0 +1,25 @@
+name: PR Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+
+      - name: Run project check
+        run: |
+          python main.py
+
+  update-confluence:
+    needs: test
+    if: success()
+    uses: ./.github/workflows/confluence-update.yml
+    with:
+      status: "✅ Unit Test Passed"
+    secrets: inherit

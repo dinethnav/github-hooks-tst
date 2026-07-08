@@ -1,0 +1,65 @@
+name: Confluence Update
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        required: true
+        type: string
+
+jobs:
+  update-confluence:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Update Confluence table
+        env:
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+          STATUS: ${{ inputs.status }}
+          REPO_NAME: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          BRANCH_NAME: ${{ github.head_ref }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          PAGE_JSON=$(curl -s -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" \
+            "$CONFLUENCE_BASE_URL/wiki/rest/api/content/$CONFLUENCE_PAGE_ID?expand=body.storage,version")
+
+          TITLE=$(echo "$PAGE_JSON" | jq -r '.title')
+          VERSION=$(echo "$PAGE_JSON" | jq -r '.version.number')
+          BODY=$(echo "$PAGE_JSON" | jq -r '.body.storage.value')
+
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          NEW_ROW="<tr><td>${REPO_NAME}</td><td><a href=\"${PR_URL}\">#${PR_NUMBER} - ${PR_TITLE}</a></td><td>${BRANCH_NAME}</td><td><code>${SHORT_SHA}</code></td><td>${STATUS}</td><td>${TIMESTAMP}</td></tr>"
+
+          UPDATED_BODY="${BODY/<\/tbody>/${NEW_ROW}<\/tbody>}"
+
+          jq -n \
+            --arg id "$CONFLUENCE_PAGE_ID" \
+            --arg title "$TITLE" \
+            --arg body "$UPDATED_BODY" \
+            --argjson version "$((VERSION + 1))" \
+            '{
+              id: $id,
+              type: "page",
+              title: $title,
+              version: { number: $version },
+              body: {
+                storage: {
+                  value: $body,
+                  representation: "storage"
+                }
+              }
+            }' > payload.json
+
+          curl -X PUT \
+            -u "$CONFLUENCE_EMAIL:$CONFLUENCE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @payload.json \
+            "$CONFLUENCE_BASE_URL/wiki/rest/api/content/$CONFLUENCE_PAGE_ID"
